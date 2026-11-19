@@ -1,0 +1,476 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  termsAcceptedAt      DateTime?
+  id                   String                @id @default(cuid())
+  name                 String?
+  email                String                @unique
+  passwordHash         String
+  plan                 String                @default("free")
+  // 🩹 2026-09-01: apps com múltiplos papéis (jogador/dono, recepção/vet/admin…)
+  // faziam `prisma.user.findMany({ where: { role } })` e o build quebrava
+  // (TS2353: 'role' não existe em UserWhereInput). Agora a fundação tem o campo.
+  role                 String                @default("user")
+  stripeCustomerId     String?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  projects             Project[]
+  reserva_criadaPors   Reserva[]             @relation("ReservaCriadaPor")
+  reserva_hospedeUsers Reserva[]             @relation("ReservaHospedeUser")
+  notifications        Notification[]
+  hospede              Hospede?
+  folioLancamentos     FolioLancamento[]
+  pagamentos           Pagamento[]           @relation("PagamentoRegistradoPor")
+  statusHousekeepings  StatusHousekeeping[]  @relation("StatusHousekeepingAtualizadoPor")
+  escalaCamareiras     EscalaCamareira[]     @relation("EscalaCamareiraUsuario")
+  bloqueioManutencaos  BloqueioManutencao[]  @relation("BloqueioCriadoPor")
+  auditoriaCheckInOuts AuditoriaCheckInOut[] @relation("AuditoriaUsuario")
+  unidade              Unidade?              @relation("UsuarioUnidade", fields: [unidadeId], references: [id])
+  unidadeId            String?
+}
+
+model Project {
+  id        String   @id @default(cuid())
+  name      String
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([ownerId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  titulo    String
+  mensagem  String
+  tipo      String   @default("info")
+  lida      Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Unidade {
+  id        String   @id @default(cuid())
+  nome      String
+  slug      String   @unique
+  endereco  String?
+  cidade    String?
+  estado    String?
+  cep       String?
+  telefone  String?
+  email     String?
+  timezone  String   @default("America/Sao_Paulo")
+  ativa     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  usuarios              User[]                 @relation("UsuarioUnidade")
+  quartos               Quarto[]
+  tiposDeQuarto         TipoDeQuarto[]
+  temporadas            Temporada[]
+  tarifas               Tarifa[]
+  reservas              Reserva[]
+  politicasCancelamento PoliticaCancelamento[]
+  escalas               EscalaCamareira[]
+  bloqueios             BloqueioManutencao[]
+}
+
+model TipoDeQuarto {
+  id                 String   @id @default(cuid())
+  unidadeId          String
+  unidade            Unidade  @relation(fields: [unidadeId], references: [id])
+  nome               String
+  descricao          String?
+  capacidadeAdultos  Int      @default(2)
+  capacidadeCriancas Int      @default(0)
+  camas              String?
+  metragem           Float?
+  ativo              Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  quartos     Quarto[]
+  comodidades Comodidade[]
+  tarifas     Tarifa[]
+  fotos       FotoQuarto[]
+  reservas    Reserva[]
+
+  @@index([unidadeId])
+}
+
+model Comodidade {
+  id        String   @id @default(cuid())
+  nome      String   @unique
+  icone     String?
+  categoria String   @default("geral")
+  createdAt DateTime @default(now())
+
+  tiposDeQuarto TipoDeQuarto[]
+}
+
+model FotoQuarto {
+  id             String       @id @default(cuid())
+  tipoDeQuartoId String
+  tipoDeQuarto   TipoDeQuarto @relation(fields: [tipoDeQuartoId], references: [id])
+  url            String
+  legenda        String?
+  ordem          Int          @default(0)
+  principal      Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+
+  @@index([tipoDeQuartoId])
+}
+
+model Quarto {
+  id             String       @id @default(cuid())
+  unidadeId      String
+  unidade        Unidade      @relation(fields: [unidadeId], references: [id])
+  tipoDeQuartoId String
+  tipoDeQuarto   TipoDeQuarto @relation(fields: [tipoDeQuartoId], references: [id])
+  numero         String
+  andar          Int?
+  ativo          Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  reservas           Reserva[]
+  statusHousekeeping StatusHousekeeping[]
+  bloqueios          BloqueioManutencao[]
+
+  @@unique([unidadeId, numero])
+  @@index([unidadeId])
+  @@index([tipoDeQuartoId])
+}
+
+model Temporada {
+  id         String   @id @default(cuid())
+  unidadeId  String
+  unidade    Unidade  @relation(fields: [unidadeId], references: [id])
+  nome       String
+  dataInicio DateTime
+  dataFim    DateTime
+  prioridade Int      @default(0)
+  ativa      Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  tarifas Tarifa[]
+
+  @@index([unidadeId])
+}
+
+model Tarifa {
+  id                String       @id @default(cuid())
+  unidadeId         String
+  unidade           Unidade      @relation(fields: [unidadeId], references: [id])
+  tipoDeQuartoId    String
+  tipoDeQuarto      TipoDeQuarto @relation(fields: [tipoDeQuartoId], references: [id])
+  temporadaId       String?
+  temporada         Temporada?   @relation(fields: [temporadaId], references: [id])
+  nome              String
+  precoBase         Decimal      @db.Decimal(10, 2)
+  precoFimSemana    Decimal?     @db.Decimal(10, 2)
+  minimoNoites      Int          @default(1)
+  maximoNoites      Int?
+  adultosInclusos   Int          @default(2)
+  precoAdultoExtra  Decimal?     @db.Decimal(10, 2)
+  precoCriancaExtra Decimal?     @db.Decimal(10, 2)
+  ativa             Boolean      @default(true)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  reservas Reserva[]
+
+  @@index([unidadeId])
+  @@index([tipoDeQuartoId])
+  @@index([temporadaId])
+}
+
+model PoliticaCancelamento {
+  id                      String   @id @default(cuid())
+  unidadeId               String
+  unidade                 Unidade  @relation(fields: [unidadeId], references: [id])
+  nome                    String
+  descricao               String?
+  diasAntecedenciaGratis  Int      @default(7)
+  percentualReembolsoApos Int      @default(50)
+  percentualNoShow        Int      @default(100)
+  ativa                   Boolean  @default(true)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  reservas Reserva[]
+
+  @@index([unidadeId])
+}
+
+model Hospede {
+  id             String    @id @default(cuid())
+  userId         String?   @unique
+  user           User?     @relation(fields: [userId], references: [id])
+  nomeCompleto   String
+  cpf            String?   @unique
+  passaporte     String?
+  email          String?
+  telefone       String?
+  dataNascimento DateTime?
+  nacionalidade  String?
+  endereco       String?
+  cidade         String?
+  estado         String?
+  cep            String?
+  observacoes    String?
+  preferencias   Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  reservas      Reserva[]
+  acompanhantes Acompanhante[]
+  historicos    HistoricoHospede[]
+}
+
+model Acompanhante {
+  id             String    @id @default(cuid())
+  hospedeId      String
+  hospede        Hospede   @relation(fields: [hospedeId], references: [id])
+  reservaId      String?
+  reserva        Reserva?  @relation(fields: [reservaId], references: [id])
+  nomeCompleto   String
+  cpf            String?
+  dataNascimento DateTime?
+  parentesco     String?
+  documentoUrl   String?
+  createdAt      DateTime  @default(now())
+
+  @@index([hospedeId])
+  @@index([reservaId])
+}
+
+model HistoricoHospede {
+  id         String   @id @default(cuid())
+  hospedeId  String
+  hospede    Hospede  @relation(fields: [hospedeId], references: [id])
+  reservaId  String?
+  reserva    Reserva? @relation(fields: [reservaId], references: [id])
+  tipo       String   @default("estadia")
+  descricao  String
+  valorTotal Decimal? @db.Decimal(10, 2)
+  dataEvento DateTime @default(now())
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([hospedeId])
+}
+
+model Reserva {
+  id                     String                @id @default(cuid())
+  codigo                 String                @unique
+  unidadeId              String
+  unidade                Unidade               @relation(fields: [unidadeId], references: [id])
+  quartoId               String?
+  quarto                 Quarto?               @relation(fields: [quartoId], references: [id])
+  tipoDeQuartoId         String
+  tipoDeQuarto           TipoDeQuarto          @relation(fields: [tipoDeQuartoId], references: [id])
+  tarifaId               String?
+  tarifa                 Tarifa?               @relation(fields: [tarifaId], references: [id])
+  politicaCancelamentoId String?
+  politicaCancelamento   PoliticaCancelamento? @relation(fields: [politicaCancelamentoId], references: [id])
+
+  hospedeId String
+  hospede   Hospede @relation(fields: [hospedeId], references: [id])
+
+  criadaPorId   String?
+  criadaPor     User?   @relation("ReservaCriadaPor", fields: [criadaPorId], references: [id])
+  hospedeUserId String?
+  hospedeUser   User?   @relation("ReservaHospedeUser", fields: [hospedeUserId], references: [id])
+
+  dataCheckin  DateTime
+  dataCheckout DateTime
+  adultos      Int      @default(1)
+  criancas     Int      @default(0)
+  noites       Int
+
+  status       String  @default("pre_reserva")
+  canalOrigem  String  @default("site")
+  valorDiarias Decimal @db.Decimal(10, 2)
+  valorExtras  Decimal @default(0) @db.Decimal(10, 2)
+  valorTotal   Decimal @db.Decimal(10, 2)
+  valorPago    Decimal @default(0) @db.Decimal(10, 2)
+
+  observacoes         String?
+  motivoCancelamento  String?
+  canceladaEm         DateTime?
+  noShowEm            DateTime?
+  checkinRealizadoEm  DateTime?
+  checkoutRealizadoEm DateTime?
+
+  documentoUrl          String?
+  assinaturaUrl         String?
+  preCheckinRealizadoEm DateTime?
+  alerta48hEnviadoEm    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  acompanhantes Acompanhante[]
+  folios        Folio[]
+  pagamentos    Pagamento[]
+  auditorias    AuditoriaCheckInOut[]
+  historicos    HistoricoHospede[]
+
+  @@index([unidadeId, dataCheckin, dataCheckout])
+  @@index([quartoId, dataCheckin, dataCheckout])
+  @@index([status])
+  @@index([unidadeId])
+  @@index([quartoId])
+  @@index([tipoDeQuartoId])
+  @@index([tarifaId])
+  @@index([politicaCancelamentoId])
+  @@index([hospedeId])
+  @@index([criadaPorId])
+  @@index([hospedeUserId])
+}
+
+model Folio {
+  id               String    @id @default(cuid())
+  reservaId        String
+  reserva          Reserva   @relation(fields: [reservaId], references: [id])
+  numero           String    @unique
+  status           String    @default("aberto")
+  totalLancamentos Decimal   @default(0) @db.Decimal(10, 2)
+  totalPago        Decimal   @default(0) @db.Decimal(10, 2)
+  saldo            Decimal   @default(0) @db.Decimal(10, 2)
+  fechadoEm        DateTime?
+  reciboPdfUrl     String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  lancamentos FolioLancamento[]
+  pagamentos  Pagamento[]
+
+  @@index([reservaId])
+}
+
+model FolioLancamento {
+  id            String    @id @default(cuid())
+  folioId       String
+  folio         Folio     @relation(fields: [folioId], references: [id])
+  setor         String
+  descricao     String
+  quantidade    Int       @default(1)
+  valorUnitario Decimal   @db.Decimal(10, 2)
+  valorTotal    Decimal   @db.Decimal(10, 2)
+  lancadoPorId  String?
+  lancadoPor    User?     @relation(fields: [lancadoPorId], references: [id])
+  estornado     Boolean   @default(false)
+  estornadoEm   DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([folioId])
+  @@index([lancadoPorId])
+}
+
+model Pagamento {
+  id               String    @id @default(cuid())
+  reservaId        String
+  reserva          Reserva   @relation(fields: [reservaId], references: [id])
+  folioId          String?
+  folio            Folio?    @relation(fields: [folioId], references: [id])
+  valor            Decimal   @db.Decimal(10, 2)
+  metodo           String
+  status           String    @default("pendente")
+  gateway          String?
+  gatewayPaymentId String?
+  gatewayPayload   Json?
+  registradoPorId  String?
+  registradoPor    User?     @relation("PagamentoRegistradoPor", fields: [registradoPorId], references: [id])
+  pagoEm           DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([reservaId])
+  @@index([folioId])
+  @@index([registradoPorId])
+}
+
+model StatusHousekeeping {
+  id              String   @id @default(cuid())
+  quartoId        String
+  quarto          Quarto   @relation(fields: [quartoId], references: [id])
+  status          String   @default("limpo")
+  observacoes     String?
+  atualizadoPorId String?
+  atualizadoPor   User?    @relation("StatusHousekeepingAtualizadoPor", fields: [atualizadoPorId], references: [id])
+  atualizadoEm    DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  @@index([quartoId])
+  @@index([atualizadoPorId])
+}
+
+model EscalaCamareira {
+  id                String   @id @default(cuid())
+  unidadeId         String
+  unidade           Unidade  @relation(fields: [unidadeId], references: [id])
+  camareiraId       String
+  camareira         User     @relation("EscalaCamareiraUsuario", fields: [camareiraId], references: [id])
+  data              DateTime
+  turno             String   @default("manha")
+  quartosAtribuidos Json?
+  observacoes       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([unidadeId, data])
+  @@index([unidadeId])
+  @@index([camareiraId])
+}
+
+model BloqueioManutencao {
+  id          String   @id @default(cuid())
+  unidadeId   String
+  unidade     Unidade  @relation(fields: [unidadeId], references: [id])
+  quartoId    String
+  quarto      Quarto   @relation(fields: [quartoId], references: [id])
+  motivo      String
+  dataInicio  DateTime
+  dataFim     DateTime
+  criadoPorId String?
+  criadoPor   User?    @relation("BloqueioCriadoPor", fields: [criadoPorId], references: [id])
+  ativo       Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([quartoId, dataInicio, dataFim])
+  @@index([unidadeId])
+  @@index([quartoId])
+  @@index([criadoPorId])
+}
+
+model AuditoriaCheckInOut {
+  id        String   @id @default(cuid())
+  reservaId String
+  reserva   Reserva  @relation(fields: [reservaId], references: [id])
+  usuarioId String?
+  usuario   User?    @relation("AuditoriaUsuario", fields: [usuarioId], references: [id])
+  acao      String
+  detalhes  Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([reservaId])
+  @@index([acao])
+  @@index([usuarioId])
+}
